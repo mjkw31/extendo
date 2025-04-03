@@ -24,6 +24,7 @@ package extendo_test
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -258,6 +259,63 @@ var _ = Describe("List an iRODS path", func() {
 					}
 
 					Expect(items).To(WithTransform(getRodsPaths, ConsistOf(expectedItems)))
+				})
+			})
+
+			When("getting metadata for many files at once", func() {
+				It("retrieves the metadata for the correct file", func() {
+					files := [...]string{
+						"testdata/1/reads/fast5/reads1.fast5",
+						"testdata/1/reads/fast5/reads1.fast5.md5",
+						"testdata/1/reads/fast5/reads2.fast5",
+						"testdata/1/reads/fast5/reads3.fast5",
+						"testdata/1/reads/fastq/reads1.fastq",
+						"testdata/1/reads/fastq/reads1.fastq.md5",
+						"testdata/1/reads/fastq/reads2.fastq",
+						"testdata/1/reads/fastq/reads3.fastq",
+						"testdata/testdir/.gitignore",
+					}
+
+					var (
+						wg        sync.WaitGroup
+						retrieved [len(files)]ex.RodsItem
+						errors    [len(files)]error
+					)
+
+					for _, file := range files {
+						_, err := client.MetaAdd(ex.Args{}, ex.RodsItem{
+							IPath: filepath.Join(workColl, filepath.Dir(file)),
+							IName: filepath.Base(file),
+							IAVUs: []ex.AVU{
+								{Attr: "path", Value: file},
+							},
+						})
+
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					wg.Add(len(files))
+
+					for n, file := range files {
+						go func(n int, file string) {
+							defer wg.Done()
+
+							retrieved[n], errors[n] = client.ListItem(ex.Args{AVU: true}, ex.RodsItem{
+								IPath: filepath.Join(workColl, filepath.Dir(file)),
+								IName: filepath.Base(file),
+							})
+						}(n, file)
+					}
+
+					wg.Wait()
+
+					for _, err := range errors {
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					for n, file := range files {
+						Expect(retrieved[n].IAVUs[0].Value).To(Equal(file))
+					}
 				})
 			})
 		})
